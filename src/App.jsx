@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Play, Pause, RotateCcw, Volume2, VolumeX, Keyboard } from 'lucide-react';
 
 const PRESETS = {
@@ -62,7 +62,7 @@ const PRESETS = {
 };
 
 export default function App() {
-  const [activePresetKey, setActivePresetKey] = useState('parabola');
+  const [activePresetKey, setActivePresetKey] = useState('cubic');
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(4);
@@ -143,7 +143,6 @@ export default function App() {
     }
   }, [soundEnabled]);
 
-  // Tactile audio feedback for step scrubbing
   const playScrubProbe = useCallback((freq, pan) => {
     if (!soundEnabled) return;
     initAudio();
@@ -223,7 +222,6 @@ export default function App() {
     setStatusMessage(`Reset to start of ${currentPreset.name}.`);
   }, [currentPreset.name]);
 
-  // Incremental scrubbing engine
   const handleScrubStep = useCallback((delta) => {
     setIsPlaying(false);
     if (gainRef.current && audioCtxRef.current) {
@@ -247,7 +245,6 @@ export default function App() {
     });
   }, [currentPreset, getFreqFromY, playScrubProbe, checkCriticalPoints]);
 
-  // Keyboard navigation listener
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
@@ -278,7 +275,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handlePlayToggle, handleReset, handleScrubStep]);
 
-  // Continuous sweep playback animation loop
   useEffect(() => {
     if (!isPlaying) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -334,9 +330,43 @@ export default function App() {
     };
   }, [isPlaying, playbackSpeed, currentPreset, soundEnabled, getFreqFromY, checkCriticalPoints]);
 
+  // Generate SVG curve points
+  const { points, minY, maxY } = useMemo(() => {
+    const numSamples = 200;
+    const [minX, maxX] = currentPreset.domain;
+    const [rangeMin, rangeMax] = currentPreset.range;
+    const pts = [];
+
+    for (let i = 0; i <= numSamples; i++) {
+      const norm = i / numSamples;
+      const x = minX + norm * (maxX - minX);
+      const y = currentPreset.fn(x);
+      pts.push({ norm, x, y });
+    }
+
+    return { points: pts, minY: rangeMin, maxY: rangeMax };
+  }, [currentPreset]);
+
   const [minX, maxX] = currentPreset.domain;
   const currentActualX = minX + playhead * (maxX - minX);
   const currentActualY = currentPreset.fn(currentActualX);
+  const currentPan = playhead * 2 - 1;
+  const currentFreq = getFreqFromY(currentActualY, currentPreset.range);
+
+  // SVG coordinate transformation helpers
+  const svgWidth = 800;
+  const svgHeight = 260;
+  const paddingX = 40;
+  const paddingY = 24;
+  const usableWidth = svgWidth - paddingX * 2;
+  const usableHeight = svgHeight - paddingY * 2;
+
+  const getYPos = (y) => {
+    const norm = (y - minY) / (maxY - minY || 1);
+    return (svgHeight - paddingY) - norm * usableHeight;
+  };
+
+  const getXPos = (progress) => paddingX + progress * usableWidth;
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#f8fafc', padding: '2rem 1.5rem', fontFamily: 'sans-serif' }}>
@@ -409,7 +439,7 @@ export default function App() {
           </div>
         </section>
 
-        {/* Main Display & Controls */}
+        {/* Main Display, Graph & Controls */}
         <main style={{ backgroundColor: '#1e293b', borderRadius: '0.75rem', padding: '1.5rem', border: '1px solid #334155', marginBottom: '1.5rem' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -421,6 +451,103 @@ export default function App() {
               <span style={{ color: '#38bdf8', fontSize: '1.15rem', fontWeight: 'bold' }}>
                 X: {currentActualX.toFixed(2)} | Y: {currentActualY.toFixed(2)}
               </span>
+            </div>
+          </div>
+
+          {/* SVG Visualizer Canvas */}
+          <div style={{ backgroundColor: '#090d16', borderRadius: '0.5rem', border: '1px solid #334155', padding: '0.5rem', marginBottom: '1.25rem' }}>
+            <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+              {/* Reference Grid lines */}
+              <line x1={paddingX} y1={paddingY} x2={paddingX} y2={svgHeight - paddingY} stroke="#1e293b" strokeWidth="1" />
+              <line x1={paddingX} y1={svgHeight - paddingY} x2={svgWidth - paddingX} y2={svgHeight - paddingY} stroke="#1e293b" strokeWidth="1" />
+
+              {/* Zero-Axis baseline if within range */}
+              {minY < 0 && maxY > 0 && (
+                <line
+                  x1={paddingX}
+                  y1={getYPos(0)}
+                  x2={svgWidth - paddingX}
+                  y2={getYPos(0)}
+                  stroke="#334155"
+                  strokeDasharray="4 4"
+                  strokeWidth="1.5"
+                />
+              )}
+
+              {/* Continuous Waveform Path */}
+              <path
+                d={points.reduce((acc, pt, idx) => {
+                  const px = getXPos(pt.norm);
+                  const py = getYPos(pt.y);
+                  return `${acc} ${idx === 0 ? 'M' : 'L'} ${px} ${py}`;
+                }, '')}
+                fill="none"
+                stroke="#38bdf8"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+
+              {/* Critical Landmark Points */}
+              {currentPreset.criticalPoints.map((pt, i) => {
+                const ptNorm = (pt.x - minX) / (maxX - minX);
+                const px = getXPos(ptNorm);
+                const py = getYPos(pt.y);
+                return (
+                  <circle
+                    key={i}
+                    cx={px}
+                    cy={py}
+                    r="5"
+                    fill="#f43f5e"
+                    stroke="#0f172a"
+                    strokeWidth="2"
+                  />
+                );
+              })}
+
+              {/* Vertical Playhead Cursor */}
+              <line
+                x1={getXPos(playhead)}
+                y1={paddingY}
+                x2={getXPos(playhead)}
+                y2={svgHeight - paddingY}
+                stroke="#f8fafc"
+                strokeWidth="2"
+                strokeDasharray="4 2"
+              />
+
+              {/* Active Coordinate Tracking Dot */}
+              <circle
+                cx={getXPos(playhead)}
+                cy={getYPos(currentActualY)}
+                r="7"
+                fill="#facc15"
+                stroke="#0f172a"
+                strokeWidth="2"
+              />
+            </svg>
+          </div>
+
+          {/* Real-time Telemetry Data Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div style={{ backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>X Coordinate</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f8fafc', marginTop: '0.2rem' }}>{currentActualX.toFixed(2)}</div>
+            </div>
+            <div style={{ backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>Y Amplitude</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f8fafc', marginTop: '0.2rem' }}>{currentActualY.toFixed(2)}</div>
+            </div>
+            <div style={{ backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>Pitch Frequency</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f8fafc', marginTop: '0.2rem' }}>{Math.round(currentFreq)} Hz</div>
+            </div>
+            <div style={{ backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>Spatial Pan</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f8fafc', marginTop: '0.2rem' }}>
+                {currentPan <= -0.1 ? `${Math.round(Math.abs(currentPan) * 100)}% Left` : currentPan >= 0.1 ? `${Math.round(currentPan * 100)}% Right` : 'Center'}
+              </div>
             </div>
           </div>
 
