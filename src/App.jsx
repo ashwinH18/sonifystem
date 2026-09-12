@@ -1,5 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Keyboard, Upload, X, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import { 
+  Play, 
+  Pause, 
+  RotateCcw, 
+  Volume2, 
+  VolumeX, 
+  Keyboard, 
+  Upload, 
+  X, 
+  FileText, 
+  CheckCircle2, 
+  AlertCircle,
+  SunMoon
+} from 'lucide-react';
 
 const DEFAULT_PRESETS = {
   parabola: {
@@ -61,7 +74,6 @@ const DEFAULT_PRESETS = {
   }
 };
 
-// Helper to parse CSV or JSON into interpolated dataset object
 function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
   const trimmed = rawText.trim();
   if (!trimmed) throw new Error("Dataset input is empty.");
@@ -69,7 +81,6 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
   let parsedPairs = [];
 
   if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-    // JSON parsing
     try {
       const json = JSON.parse(trimmed);
       const dataArr = Array.isArray(json) ? json : (json.data || json.points || []);
@@ -95,7 +106,6 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
       throw new Error(`JSON parse failure: ${err.message}`);
     }
   } else {
-    // CSV parsing
     const lines = trimmed.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (lines.length < 2) throw new Error("CSV requires at least 2 rows of coordinates.");
 
@@ -105,7 +115,6 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
       const x = Number(parts[0]);
       const y = Number(parts[1]);
 
-      // If header detected in line 0, gracefully skip
       if (i === 0 && (isNaN(x) || isNaN(y))) continue;
 
       if (isNaN(x) || isNaN(y)) {
@@ -119,12 +128,11 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
     throw new Error("Could not extract at least 2 valid numeric (x, y) coordinates.");
   }
 
-  // Sort sequentially by X coordinate
   parsedPairs.sort((a, b) => a.x - b.x);
 
   const minX = parsedPairs[0].x;
   const maxX = parsedPairs[parsedPairs.length - 1].x;
-  if (minX === maxX) throw new Error("All points possess identical X values. Domain span must be greater than 0.");
+  if (minX === maxX) throw new Error("All points possess identical X values. Domain span must be > 0.");
 
   let minY = Infinity;
   let maxY = -Infinity;
@@ -138,12 +146,10 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
     maxY += 1;
   }
 
-  // Piecewise linear interpolation function f(x)
   const fn = (queryX) => {
     if (queryX <= minX) return parsedPairs[0].y;
     if (queryX >= maxX) return parsedPairs[parsedPairs.length - 1].y;
 
-    // Binary search for surrounding points
     let low = 0;
     let high = parsedPairs.length - 1;
     while (low <= high) {
@@ -163,7 +169,6 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
     return p0.y + t * (p1.y - p0.y);
   };
 
-  // Detect basic critical landmarks (roots & local extrema)
   const criticalPoints = [];
   for (let i = 1; i < parsedPairs.length - 1; i++) {
     const prev = parsedPairs[i - 1].y;
@@ -177,7 +182,6 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
     }
   }
 
-  // Root detections (sign change crossings)
   for (let i = 0; i < parsedPairs.length - 1; i++) {
     const y1 = parsedPairs[i].y;
     const y2 = parsedPairs[i + 1].y;
@@ -189,7 +193,7 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
 
   return {
     name: datasetName,
-    description: `User Ingested Dataset: ${parsedPairs.length} samples spanning [${minX.toFixed(2)}, ${maxX.toFixed(2)}].`,
+    description: `User Dataset: ${parsedPairs.length} samples on [${minX.toFixed(2)}, ${maxX.toFixed(2)}].`,
     fn,
     domain: [minX, maxX],
     range: [minY, maxY],
@@ -205,8 +209,11 @@ export default function App() {
   const [playbackSpeed, setPlaybackSpeed] = useState(4);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [statusMessage, setStatusMessage] = useState("Select a preset, use Space to play, or Arrow keys to scrub.");
+  
+  // FR-06: High-Contrast AAA Mode
+  const [isHighContrast, setIsHighContrast] = useState(false);
 
-  // Modal State for FR-07
+  // FR-07: Ingestion Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [customDataName, setCustomDataName] = useState("Economic Trend (CPI)");
   const [customDataInput, setCustomDataInput] = useState(
@@ -230,7 +237,56 @@ export default function App() {
   const animFrameRef = useRef(null);
   const startTimeRef = useRef(null);
   const lastCriticalAnnounced = useRef(null);
-  const modalRef = useRef(null);
+
+  // Theme palettes: Default Slate vs. WCAG AAA Yellow & Black
+  const theme = useMemo(() => {
+    if (isHighContrast) {
+      return {
+        bg: '#000000',
+        cardBg: '#000000',
+        surfaceBg: '#050505',
+        border: '#ffd600',
+        borderFocus: '#ffffff',
+        borderWidth: '2px',
+        textPrimary: '#ffd600',
+        textSecondary: '#ffffff',
+        accent: '#ffd600',
+        accentContrastText: '#000000',
+        curveStroke: '#ffd600',
+        gridLines: '#333333',
+        axisZero: '#ffffff',
+        cursorLine: '#ffffff',
+        cursorDot: '#00ffff',
+        landmarkDot: '#ff2a2a',
+        buttonSecondaryBg: '#000000',
+        buttonSecondaryText: '#ffffff',
+        consoleBg: '#000000',
+        consoleText: '#ffd600'
+      };
+    }
+    return {
+      bg: '#0f172a',
+      cardBg: '#1e293b',
+      surfaceBg: '#0f172a',
+      border: '#334155',
+      borderFocus: '#38bdf8',
+      borderWidth: '1px',
+      textPrimary: '#f8fafc',
+      textSecondary: '#94a3b8',
+      accent: '#38bdf8',
+      accentContrastText: '#0f172a',
+      curveStroke: '#38bdf8',
+      gridLines: '#1e293b',
+      axisZero: '#475569',
+      cursorLine: '#ffffff',
+      cursorDot: '#facc15',
+      landmarkDot: '#f43f5e',
+      buttonSecondaryBg: '#334155',
+      buttonSecondaryText: '#ffffff',
+      consoleBg: '#090d16',
+      consoleText: '#38bdf8'
+    };
+  }, [isHighContrast]);
 
   const initAudio = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -394,7 +450,14 @@ export default function App() {
     });
   }, [currentPreset, getFreqFromY, playScrubProbe, checkCriticalPoints]);
 
-  // Modal Submission
+  const toggleHighContrast = useCallback(() => {
+    setIsHighContrast((prev) => {
+      const next = !prev;
+      setStatusMessage(`Contrast mode changed: ${next ? "WCAG AAA Yellow and Black" : "Standard Slate Dark"}.`);
+      return next;
+    });
+  }, []);
+
   const handleDatasetSubmit = (e) => {
     e.preventDefault();
     setParseError("");
@@ -411,19 +474,16 @@ export default function App() {
       handleReset();
       setActivePresetKey(customKey);
       setIsModalOpen(false);
-      setStatusMessage(`Successfully imported and loaded "${parsedModel.name}".`);
+      setStatusMessage(`Imported and active: "${parsedModel.name}".`);
     } catch (err) {
       setParseError(err.message);
     }
   };
 
-  // Keyboard navigation & modal trap
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (isModalOpen) {
-        if (e.code === 'Escape') {
-          setIsModalOpen(false);
-        }
+        if (e.code === 'Escape') setIsModalOpen(false);
         return;
       }
 
@@ -437,6 +497,10 @@ export default function App() {
         case 'KeyR':
           e.preventDefault();
           handleReset();
+          break;
+        case 'KeyH':
+          e.preventDefault();
+          toggleHighContrast();
           break;
         case 'ArrowLeft':
           e.preventDefault();
@@ -453,9 +517,8 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handlePlayToggle, handleReset, handleScrubStep, isModalOpen]);
+  }, [handlePlayToggle, handleReset, handleScrubStep, toggleHighContrast, isModalOpen]);
 
-  // Continuous animation loop
   useEffect(() => {
     if (!isPlaying) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -511,7 +574,6 @@ export default function App() {
     };
   }, [isPlaying, playbackSpeed, currentPreset, soundEnabled, getFreqFromY, checkCriticalPoints]);
 
-  // SVG points cache
   const { points, minY, maxY } = useMemo(() => {
     const numSamples = 200;
     const [minX, maxX] = currentPreset.domain;
@@ -549,22 +611,44 @@ export default function App() {
   const getXPos = (progress) => paddingX + progress * usableWidth;
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#f8fafc', padding: '2rem 1.5rem', fontFamily: 'sans-serif' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: theme.bg, color: theme.textPrimary, padding: '2rem 1.5rem', fontFamily: 'sans-serif', transition: 'background-color 0.15s ease' }}>
       <div style={{ maxWidth: '960px', margin: '0 auto' }}>
         
         {/* Header */}
-        <header style={{ marginBottom: '2rem', borderBottom: '1px solid #1e293b', paddingBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+        <header style={{ marginBottom: '2rem', borderBottom: `${theme.borderWidth} solid ${theme.border}`, paddingBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-              <Volume2 color="#38bdf8" size={32} />
-              <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', margin: 0 }}>SonifySTEM</h1>
+              <Volume2 color={theme.accent} size={32} />
+              <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', margin: 0, color: theme.textPrimary }}>SonifySTEM</h1>
             </div>
-            <p style={{ color: '#94a3b8', margin: 0, fontSize: '0.95rem' }}>
-              Spatial Web Audio Sonification for Screen Readers & STEM Accessibility
+            <p style={{ color: theme.textSecondary, margin: 0, fontSize: '0.95rem' }}>
+              Deterministic Spatial Audio Visualizer for STEM Accessibility
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {/* FR-06: High Contrast Toggle */}
+            <button
+              onClick={toggleHighContrast}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                backgroundColor: isHighContrast ? theme.accent : theme.surfaceBg,
+                border: `${theme.borderWidth} solid ${theme.border}`,
+                color: isHighContrast ? theme.accentContrastText : theme.textPrimary,
+                padding: '0.5rem 1rem',
+                borderRadius: '0.375rem',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+              aria-pressed={isHighContrast}
+              aria-label="Toggle WCAG AAA Yellow and Black High-Contrast Mode"
+            >
+              <SunMoon size={18} />
+              <span>{isHighContrast ? 'AAA Contrast ON' : 'High Contrast'}</span>
+            </button>
+
             <button
               onClick={() => {
                 setParseError("");
@@ -574,12 +658,12 @@ export default function App() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
-                backgroundColor: '#38bdf8',
-                border: 'none',
-                color: '#0f172a',
+                backgroundColor: theme.accent,
+                border: `${theme.borderWidth} solid ${theme.border}`,
+                color: theme.accentContrastText,
                 padding: '0.5rem 1rem',
                 borderRadius: '0.375rem',
-                fontWeight: 600,
+                fontWeight: 700,
                 cursor: 'pointer'
               }}
               aria-haspopup="dialog"
@@ -600,11 +684,12 @@ export default function App() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
-                backgroundColor: soundEnabled ? '#1e293b' : '#ef4444',
-                border: '1px solid #334155',
-                color: '#f8fafc',
+                backgroundColor: soundEnabled ? theme.surfaceBg : '#ef4444',
+                border: `${theme.borderWidth} solid ${soundEnabled ? theme.border : '#ef4444'}`,
+                color: soundEnabled ? theme.textPrimary : '#ffffff',
                 padding: '0.5rem 1rem',
                 borderRadius: '0.375rem',
+                fontWeight: 600,
                 cursor: 'pointer'
               }}
               aria-label={soundEnabled ? "Mute audio" : "Unmute audio"}
@@ -617,60 +702,63 @@ export default function App() {
 
         {/* Preset Selector */}
         <section style={{ marginBottom: '1.5rem' }}>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '0.5rem' }}>
+          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 700, color: theme.textSecondary, marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             Select Mathematical Model / Dataset
           </label>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-            {Object.entries(presets).map(([key, data]) => (
-              <button
-                key={key}
-                onClick={() => {
-                  handleReset();
-                  setActivePresetKey(key);
-                  setStatusMessage(`Loaded: ${data.name}`);
-                }}
-                style={{
-                  padding: '0.75rem 1rem',
-                  borderRadius: '0.5rem',
-                  border: activePresetKey === key ? '2px solid #38bdf8' : '1px solid #334155',
-                  backgroundColor: activePresetKey === key ? '#1e293b' : '#0f172a',
-                  color: '#f8fafc',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  position: 'relative'
-                }}
-              >
-                <div style={{ fontWeight: 600 }}>{data.name}</div>
-                {key.startsWith('custom_') && (
-                  <span style={{ fontSize: '0.65rem', backgroundColor: '#0284c7', color: '#fff', padding: '2px 6px', borderRadius: '4px', position: 'absolute', top: '8px', right: '8px' }}>
-                    CUSTOM
-                  </span>
-                )}
-              </button>
-            ))}
+            {Object.entries(presets).map(([key, data]) => {
+              const isSelected = activePresetKey === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    handleReset();
+                    setActivePresetKey(key);
+                    setStatusMessage(`Loaded: ${data.name}`);
+                  }}
+                  style={{
+                    padding: '0.75rem 1rem',
+                    borderRadius: '0.5rem',
+                    border: isSelected ? `3px solid ${theme.accent}` : `${theme.borderWidth} solid ${theme.border}`,
+                    backgroundColor: isSelected ? (isHighContrast ? '#111100' : '#1e293b') : theme.cardBg,
+                    color: isSelected ? theme.accent : theme.textPrimary,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    position: 'relative'
+                  }}
+                >
+                  <div style={{ fontWeight: isSelected ? 800 : 600 }}>{data.name}</div>
+                  {key.startsWith('custom_') && (
+                    <span style={{ fontSize: '0.65rem', backgroundColor: theme.accent, color: theme.accentContrastText, fontWeight: 800, padding: '2px 6px', borderRadius: '4px', position: 'absolute', top: '8px', right: '8px' }}>
+                      CUSTOM
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </section>
 
         {/* Main Display, Graph & Controls */}
-        <main style={{ backgroundColor: '#1e293b', borderRadius: '0.75rem', padding: '1.5rem', border: '1px solid #334155', marginBottom: '1.5rem' }}>
+        <main style={{ backgroundColor: theme.cardBg, borderRadius: '0.75rem', padding: '1.5rem', border: `${theme.borderWidth} solid ${theme.border}`, marginBottom: '1.5rem' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
             <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: '0 0 0.25rem 0' }}>{currentPreset.name}</h2>
-              <p style={{ fontSize: '0.875rem', color: '#94a3b8', margin: 0 }}>{currentPreset.description}</p>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 0.25rem 0', color: theme.textPrimary }}>{currentPreset.name}</h2>
+              <p style={{ fontSize: '0.875rem', color: theme.textSecondary, margin: 0 }}>{currentPreset.description}</p>
             </div>
             <div style={{ textAlign: 'right', fontFamily: 'monospace' }}>
-              <span style={{ color: '#38bdf8', fontSize: '1.15rem', fontWeight: 'bold' }}>
+              <span style={{ color: theme.accent, fontSize: '1.25rem', fontWeight: 800 }}>
                 X: {currentActualX.toFixed(2)} | Y: {currentActualY.toFixed(2)}
               </span>
             </div>
           </div>
 
           {/* SVG Visualizer Canvas */}
-          <div style={{ backgroundColor: '#090d16', borderRadius: '0.5rem', border: '1px solid #334155', padding: '0.5rem', marginBottom: '1.25rem' }}>
+          <div style={{ backgroundColor: theme.surfaceBg, borderRadius: '0.5rem', border: `${theme.borderWidth} solid ${theme.border}`, padding: '0.5rem', marginBottom: '1.25rem' }}>
             <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
-              <line x1={paddingX} y1={paddingY} x2={paddingX} y2={svgHeight - paddingY} stroke="#1e293b" strokeWidth="1" />
-              <line x1={paddingX} y1={svgHeight - paddingY} x2={svgWidth - paddingX} y2={svgHeight - paddingY} stroke="#1e293b" strokeWidth="1" />
+              <line x1={paddingX} y1={paddingY} x2={paddingX} y2={svgHeight - paddingY} stroke={theme.gridLines} strokeWidth="2" />
+              <line x1={paddingX} y1={svgHeight - paddingY} x2={svgWidth - paddingX} y2={svgHeight - paddingY} stroke={theme.gridLines} strokeWidth="2" />
 
               {minY < 0 && maxY > 0 && (
                 <line
@@ -678,9 +766,9 @@ export default function App() {
                   y1={getYPos(0)}
                   x2={svgWidth - paddingX}
                   y2={getYPos(0)}
-                  stroke="#334155"
-                  strokeDasharray="4 4"
-                  strokeWidth="1.5"
+                  stroke={theme.axisZero}
+                  strokeDasharray="5 5"
+                  strokeWidth="2"
                 />
               )}
 
@@ -691,8 +779,8 @@ export default function App() {
                   return `${acc} ${idx === 0 ? 'M' : 'L'} ${px} ${py}`;
                 }, '')}
                 fill="none"
-                stroke="#38bdf8"
-                strokeWidth="3"
+                stroke={theme.curveStroke}
+                strokeWidth={isHighContrast ? "4.5" : "3"}
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -706,9 +794,9 @@ export default function App() {
                     key={i}
                     cx={px}
                     cy={py}
-                    r="5"
-                    fill="#f43f5e"
-                    stroke="#0f172a"
+                    r={isHighContrast ? "7" : "5"}
+                    fill={theme.landmarkDot}
+                    stroke="#000000"
                     strokeWidth="2"
                   />
                 );
@@ -719,45 +807,45 @@ export default function App() {
                 y1={paddingY}
                 x2={getXPos(playhead)}
                 y2={svgHeight - paddingY}
-                stroke="#f8fafc"
-                strokeWidth="2"
+                stroke={theme.cursorLine}
+                strokeWidth="2.5"
                 strokeDasharray="4 2"
               />
 
               <circle
                 cx={getXPos(playhead)}
                 cy={getYPos(currentActualY)}
-                r="7"
-                fill="#facc15"
-                stroke="#0f172a"
-                strokeWidth="2"
+                r={isHighContrast ? "9" : "7"}
+                fill={theme.cursorDot}
+                stroke="#000000"
+                strokeWidth="2.5"
               />
             </svg>
           </div>
 
           {/* Real-time Telemetry Data Cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <div style={{ backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>X Coordinate</div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f8fafc', marginTop: '0.2rem' }}>{currentActualX.toFixed(2)}</div>
+            <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
+              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>X Coordinate</div>
+              <div style={{ fontSize: '1.15rem', fontWeight: 800, color: theme.textPrimary, marginTop: '0.2rem' }}>{currentActualX.toFixed(2)}</div>
             </div>
-            <div style={{ backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>Y Amplitude</div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f8fafc', marginTop: '0.2rem' }}>{currentActualY.toFixed(2)}</div>
+            <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
+              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Y Amplitude</div>
+              <div style={{ fontSize: '1.15rem', fontWeight: 800, color: theme.textPrimary, marginTop: '0.2rem' }}>{currentActualY.toFixed(2)}</div>
             </div>
-            <div style={{ backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>Pitch Frequency</div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f8fafc', marginTop: '0.2rem' }}>{Math.round(currentFreq)} Hz</div>
+            <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
+              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Pitch Frequency</div>
+              <div style={{ fontSize: '1.15rem', fontWeight: 800, color: theme.textPrimary, marginTop: '0.2rem' }}>{Math.round(currentFreq)} Hz</div>
             </div>
-            <div style={{ backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>Spatial Pan</div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f8fafc', marginTop: '0.2rem' }}>
+            <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
+              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Spatial Pan</div>
+              <div style={{ fontSize: '1.15rem', fontWeight: 800, color: theme.textPrimary, marginTop: '0.2rem' }}>
                 {currentPan <= -0.1 ? `${Math.round(Math.abs(currentPan) * 100)}% Left` : currentPan >= 0.1 ? `${Math.round(currentPan * 100)}% Right` : 'Center'}
               </div>
             </div>
           </div>
 
-          {/* Scrub Track & Accessible Slider */}
+          {/* Accessible Scrubber Slider */}
           <div style={{ marginBottom: '1.5rem' }}>
             <input
               id="scrub-slider"
@@ -766,7 +854,7 @@ export default function App() {
               max="1"
               step="0.005"
               value={playhead}
-              aria-label="Curve scrub position"
+              aria-label="Curve scrub position slider"
               aria-valuemin="0"
               aria-valuemax="100"
               aria-valuenow={Math.round(playhead * 100)}
@@ -783,12 +871,12 @@ export default function App() {
               }}
               style={{
                 width: '100%',
-                accentColor: '#38bdf8',
+                accentColor: theme.accent,
                 cursor: 'pointer',
-                height: '8px'
+                height: '10px'
               }}
             />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 700, color: theme.textSecondary, marginTop: '0.25rem' }}>
               <span>Left Ear (-1.0)</span>
               <span>Center (0.0)</span>
               <span>Right Ear (+1.0)</span>
@@ -803,12 +891,12 @@ export default function App() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
-                backgroundColor: isPlaying ? '#e11d48' : '#0284c7',
-                color: 'white',
-                padding: '0.6rem 1.25rem',
+                backgroundColor: isPlaying ? '#e11d48' : theme.accent,
+                color: isPlaying ? '#ffffff' : theme.accentContrastText,
+                padding: '0.65rem 1.35rem',
                 borderRadius: '0.375rem',
-                border: 'none',
-                fontWeight: 600,
+                border: `${theme.borderWidth} solid ${theme.border}`,
+                fontWeight: 800,
                 cursor: 'pointer'
               }}
             >
@@ -822,11 +910,12 @@ export default function App() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
-                backgroundColor: '#334155',
-                color: 'white',
-                padding: '0.6rem 1rem',
+                backgroundColor: theme.buttonSecondaryBg,
+                color: theme.buttonSecondaryText,
+                padding: '0.65rem 1rem',
                 borderRadius: '0.375rem',
-                border: 'none',
+                border: `${theme.borderWidth} solid ${theme.border}`,
+                fontWeight: 700,
                 cursor: 'pointer'
               }}
             >
@@ -835,11 +924,18 @@ export default function App() {
             </button>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto' }}>
-              <label style={{ fontSize: '0.875rem', color: '#cbd5e1' }}>Duration:</label>
+              <label style={{ fontSize: '0.875rem', fontWeight: 700, color: theme.textSecondary }}>Duration:</label>
               <select
                 value={playbackSpeed}
                 onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
-                style={{ backgroundColor: '#0f172a', color: 'white', border: '1px solid #475569', borderRadius: '0.25rem', padding: '0.3rem 0.6rem' }}
+                style={{
+                  backgroundColor: theme.surfaceBg,
+                  color: theme.textPrimary,
+                  border: `${theme.borderWidth} solid ${theme.border}`,
+                  borderRadius: '0.25rem',
+                  padding: '0.35rem 0.6rem',
+                  fontWeight: 600
+                }}
               >
                 <option value={2}>2s (Fast)</option>
                 <option value={4}>4s (Standard)</option>
@@ -854,35 +950,37 @@ export default function App() {
           aria-live="assertive" 
           aria-atomic="true"
           style={{ 
-            backgroundColor: '#090d16', 
-            border: '1px solid #1e293b', 
+            backgroundColor: theme.consoleBg, 
+            border: `${theme.borderWidth} solid ${theme.border}`, 
             borderRadius: '0.5rem', 
             padding: '1rem', 
-            fontSize: '0.9rem', 
-            color: '#38bdf8',
-            marginBottom: '1.5rem'
+            fontSize: '0.95rem', 
+            color: theme.consoleText,
+            marginBottom: '1.5rem',
+            fontWeight: 700
           }}
         >
           <strong>Assistive Console:</strong> {statusMessage}
         </section>
 
         {/* Hotkey Guide */}
-        <section style={{ backgroundColor: '#1e293b', borderRadius: '0.5rem', padding: '1rem 1.25rem', border: '1px solid #334155' }}>
+        <section style={{ backgroundColor: theme.cardBg, borderRadius: '0.5rem', padding: '1rem 1.25rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <Keyboard size={18} color="#38bdf8" />
-            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Keyboard Navigation Shortcuts</span>
+            <Keyboard size={18} color={theme.accent} />
+            <span style={{ fontWeight: 800, fontSize: '0.9rem', color: theme.textPrimary }}>Keyboard Navigation Shortcuts</span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', fontSize: '0.8rem', color: '#94a3b8' }}>
-            <div><kbd style={{ backgroundColor: '#0f172a', padding: '2px 6px', borderRadius: '4px', border: '1px solid #475569', color: '#f8fafc' }}>Space</kbd> Play / Pause sweep</div>
-            <div><kbd style={{ backgroundColor: '#0f172a', padding: '2px 6px', borderRadius: '4px', border: '1px solid #475569', color: '#f8fafc' }}>←</kbd> / <kbd style={{ backgroundColor: '#0f172a', padding: '2px 6px', borderRadius: '4px', border: '1px solid #475569', color: '#f8fafc' }}>→</kbd> Step 1% with audio probe</div>
-            <div><kbd style={{ backgroundColor: '#0f172a', padding: '2px 6px', borderRadius: '4px', border: '1px solid #475569', color: '#f8fafc' }}>Shift</kbd> + <kbd style={{ backgroundColor: '#0f172a', padding: '2px 6px', borderRadius: '4px', border: '1px solid #475569', color: '#f8fafc' }}>←</kbd> / <kbd style={{ backgroundColor: '#0f172a', padding: '2px 6px', borderRadius: '4px', border: '1px solid #475569', color: '#f8fafc' }}>→</kbd> Jump 5%</div>
-            <div><kbd style={{ backgroundColor: '#0f172a', padding: '2px 6px', borderRadius: '4px', border: '1px solid #475569', color: '#f8fafc' }}>R</kbd> Reset cursor to 0</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', fontSize: '0.8rem', color: theme.textSecondary }}>
+            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>Space</kbd> Play / Pause sweep</div>
+            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd> / <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> Step 1% with audio probe</div>
+            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>Shift</kbd> + <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd> / <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> Jump 5%</div>
+            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>H</kbd> Toggle High Contrast (AAA)</div>
+            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>R</kbd> Reset cursor to 0</div>
           </div>
         </section>
 
       </div>
 
-      {/* FR-07 Modal Dialog */}
+      {/* FR-07 Modal Dialog with High-Contrast Tokens */}
       {isModalOpen && (
         <div 
           role="dialog" 
@@ -891,7 +989,7 @@ export default function App() {
           style={{
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
             backdropFilter: 'blur(4px)',
             display: 'flex',
             alignItems: 'center',
@@ -904,25 +1002,24 @@ export default function App() {
           }}
         >
           <div 
-            ref={modalRef}
             style={{
-              backgroundColor: '#1e293b',
-              border: '1px solid #334155',
+              backgroundColor: theme.cardBg,
+              border: `2px solid ${theme.border}`,
               borderRadius: '0.75rem',
               width: '100%',
               maxWidth: '540px',
               padding: '1.5rem',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.7)'
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <FileText color="#38bdf8" size={20} />
-                <h3 id="modal-title" style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Import Dataset (CSV / JSON)</h3>
+                <FileText color={theme.accent} size={20} />
+                <h3 id="modal-title" style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: theme.textPrimary }}>Import Dataset (CSV / JSON)</h3>
               </div>
               <button 
                 onClick={() => setIsModalOpen(false)}
-                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                style={{ background: 'none', border: 'none', color: theme.textSecondary, cursor: 'pointer' }}
                 aria-label="Close dialog"
               >
                 <X size={20} />
@@ -931,7 +1028,7 @@ export default function App() {
 
             <form onSubmit={handleDatasetSubmit}>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '0.35rem' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: theme.textSecondary, marginBottom: '0.35rem' }}>
                   Dataset Name
                 </label>
                 <input
@@ -943,10 +1040,11 @@ export default function App() {
                   style={{
                     width: '100%',
                     padding: '0.6rem',
-                    backgroundColor: '#0f172a',
-                    border: '1px solid #334155',
+                    backgroundColor: theme.surfaceBg,
+                    border: `${theme.borderWidth} solid ${theme.border}`,
                     borderRadius: '0.375rem',
-                    color: '#f8fafc',
+                    color: theme.textPrimary,
+                    fontWeight: 600,
                     boxSizing: 'border-box'
                   }}
                 />
@@ -954,7 +1052,7 @@ export default function App() {
 
               <div style={{ marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                  <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 700, color: theme.textSecondary }}>
                     Raw Data (2-Column CSV or JSON Array)
                   </label>
                   <button
@@ -970,7 +1068,7 @@ export default function App() {
 ]`
                       );
                     }}
-                    style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}
+                    style={{ background: 'none', border: 'none', color: theme.accent, fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
                   >
                     Paste JSON Example
                   </button>
@@ -984,10 +1082,10 @@ export default function App() {
                   style={{
                     width: '100%',
                     padding: '0.6rem',
-                    backgroundColor: '#0f172a',
-                    border: '1px solid #334155',
+                    backgroundColor: theme.surfaceBg,
+                    border: `${theme.borderWidth} solid ${theme.border}`,
                     borderRadius: '0.375rem',
-                    color: '#f8fafc',
+                    color: theme.textPrimary,
                     fontFamily: 'monospace',
                     fontSize: '0.85rem',
                     boxSizing: 'border-box',
@@ -997,8 +1095,8 @@ export default function App() {
               </div>
 
               {parseError && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#450a0a', border: '1px solid #991b1b', borderRadius: '0.375rem', padding: '0.6rem', color: '#fca5a5', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                  <AlertCircle size={16} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#450a0a', border: '1px solid #ff2a2a', borderRadius: '0.375rem', padding: '0.6rem', color: '#fca5a5', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                  <AlertCircle size={16} color="#ff2a2a" />
                   <span>{parseError}</span>
                 </div>
               )}
@@ -1009,10 +1107,11 @@ export default function App() {
                   onClick={() => setIsModalOpen(false)}
                   style={{
                     padding: '0.6rem 1rem',
-                    backgroundColor: '#334155',
-                    color: '#fff',
-                    border: 'none',
+                    backgroundColor: theme.buttonSecondaryBg,
+                    color: theme.buttonSecondaryText,
+                    border: `${theme.borderWidth} solid ${theme.border}`,
                     borderRadius: '0.375rem',
+                    fontWeight: 700,
                     cursor: 'pointer'
                   }}
                 >
@@ -1025,11 +1124,11 @@ export default function App() {
                     alignItems: 'center',
                     gap: '0.5rem',
                     padding: '0.6rem 1.25rem',
-                    backgroundColor: '#0284c7',
-                    color: '#fff',
+                    backgroundColor: theme.accent,
+                    color: theme.accentContrastText,
                     border: 'none',
                     borderRadius: '0.375rem',
-                    fontWeight: 600,
+                    fontWeight: 800,
                     cursor: 'pointer'
                   }}
                 >
