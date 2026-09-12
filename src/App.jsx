@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Keyboard } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Keyboard, Upload, X, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
 
-const PRESETS = {
+const DEFAULT_PRESETS = {
   parabola: {
     name: "Quadratic (y = x²)",
     description: "Parabolic curve with a clear global minimum at x = 0.",
@@ -61,7 +61,144 @@ const PRESETS = {
   }
 };
 
+// Helper to parse CSV or JSON into interpolated dataset object
+function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
+  const trimmed = rawText.trim();
+  if (!trimmed) throw new Error("Dataset input is empty.");
+
+  let parsedPairs = [];
+
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    // JSON parsing
+    try {
+      const json = JSON.parse(trimmed);
+      const dataArr = Array.isArray(json) ? json : (json.data || json.points || []);
+      if (!Array.isArray(dataArr) || dataArr.length < 2) {
+        throw new Error("JSON must contain an array with at least 2 coordinate points.");
+      }
+
+      parsedPairs = dataArr.map((item, idx) => {
+        if (Array.isArray(item) && item.length >= 2) {
+          const x = Number(item[0]);
+          const y = Number(item[1]);
+          if (isNaN(x) || isNaN(y)) throw new Error(`Invalid numeric coordinates at index ${idx}`);
+          return { x, y };
+        } else if (typeof item === 'object' && item !== null) {
+          const x = Number(item.x ?? item.X ?? item.time ?? item[0]);
+          const y = Number(item.y ?? item.Y ?? item.value ?? item[1]);
+          if (isNaN(x) || isNaN(y)) throw new Error(`Missing numeric x/y at item ${idx}`);
+          return { x, y };
+        }
+        throw new Error(`Unrecognized point structure at index ${idx}`);
+      });
+    } catch (err) {
+      throw new Error(`JSON parse failure: ${err.message}`);
+    }
+  } else {
+    // CSV parsing
+    const lines = trimmed.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) throw new Error("CSV requires at least 2 rows of coordinates.");
+
+    for (let i = 0; i < lines.length; i++) {
+      const parts = lines[i].split(/[,\t;]+/).map(p => p.trim());
+      if (parts.length < 2) continue;
+      const x = Number(parts[0]);
+      const y = Number(parts[1]);
+
+      // If header detected in line 0, gracefully skip
+      if (i === 0 && (isNaN(x) || isNaN(y))) continue;
+
+      if (isNaN(x) || isNaN(y)) {
+        throw new Error(`Invalid numeric values at CSV row ${i + 1}: "${lines[i]}"`);
+      }
+      parsedPairs.push({ x, y });
+    }
+  }
+
+  if (parsedPairs.length < 2) {
+    throw new Error("Could not extract at least 2 valid numeric (x, y) coordinates.");
+  }
+
+  // Sort sequentially by X coordinate
+  parsedPairs.sort((a, b) => a.x - b.x);
+
+  const minX = parsedPairs[0].x;
+  const maxX = parsedPairs[parsedPairs.length - 1].x;
+  if (minX === maxX) throw new Error("All points possess identical X values. Domain span must be greater than 0.");
+
+  let minY = Infinity;
+  let maxY = -Infinity;
+  parsedPairs.forEach(p => {
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  });
+
+  if (minY === maxY) {
+    minY -= 1;
+    maxY += 1;
+  }
+
+  // Piecewise linear interpolation function f(x)
+  const fn = (queryX) => {
+    if (queryX <= minX) return parsedPairs[0].y;
+    if (queryX >= maxX) return parsedPairs[parsedPairs.length - 1].y;
+
+    // Binary search for surrounding points
+    let low = 0;
+    let high = parsedPairs.length - 1;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      if (parsedPairs[mid].x <= queryX) {
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    const p0 = parsedPairs[Math.max(0, high)];
+    const p1 = parsedPairs[Math.min(parsedPairs.length - 1, low)];
+    if (p0.x === p1.x) return p0.y;
+
+    const t = (queryX - p0.x) / (p1.x - p0.x);
+    return p0.y + t * (p1.y - p0.y);
+  };
+
+  // Detect basic critical landmarks (roots & local extrema)
+  const criticalPoints = [];
+  for (let i = 1; i < parsedPairs.length - 1; i++) {
+    const prev = parsedPairs[i - 1].y;
+    const curr = parsedPairs[i].y;
+    const next = parsedPairs[i + 1].y;
+
+    if (curr > prev && curr > next) {
+      criticalPoints.push({ x: parsedPairs[i].x, y: curr, label: `Local Peak (${parsedPairs[i].x.toFixed(2)}, ${curr.toFixed(2)})` });
+    } else if (curr < prev && curr < next) {
+      criticalPoints.push({ x: parsedPairs[i].x, y: curr, label: `Local Trough (${parsedPairs[i].x.toFixed(2)}, ${curr.toFixed(2)})` });
+    }
+  }
+
+  // Root detections (sign change crossings)
+  for (let i = 0; i < parsedPairs.length - 1; i++) {
+    const y1 = parsedPairs[i].y;
+    const y2 = parsedPairs[i + 1].y;
+    if ((y1 <= 0 && y2 > 0) || (y1 >= 0 && y2 < 0)) {
+      const rootX = parsedPairs[i].x + (-y1 / (y2 - y1 || 1)) * (parsedPairs[i + 1].x - parsedPairs[i].x);
+      criticalPoints.push({ x: rootX, y: 0, label: `Root Crossing (y=0)` });
+    }
+  }
+
+  return {
+    name: datasetName,
+    description: `User Ingested Dataset: ${parsedPairs.length} samples spanning [${minX.toFixed(2)}, ${maxX.toFixed(2)}].`,
+    fn,
+    domain: [minX, maxX],
+    range: [minY, maxY],
+    criticalPoints: criticalPoints.slice(0, 8)
+  };
+}
+
 export default function App() {
+  const [presets, setPresets] = useState(DEFAULT_PRESETS);
   const [activePresetKey, setActivePresetKey] = useState('cubic');
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
@@ -69,7 +206,22 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [statusMessage, setStatusMessage] = useState("Select a preset, use Space to play, or Arrow keys to scrub.");
 
-  const currentPreset = PRESETS[activePresetKey];
+  // Modal State for FR-07
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [customDataName, setCustomDataName] = useState("Economic Trend (CPI)");
+  const [customDataInput, setCustomDataInput] = useState(
+`year, value
+2018, 2.4
+2019, 1.8
+2020, 1.2
+2021, 4.7
+2022, 8.0
+2023, 4.1
+2024, 2.9`
+  );
+  const [parseError, setParseError] = useState("");
+
+  const currentPreset = presets[activePresetKey] || presets.cubic;
 
   const audioCtxRef = useRef(null);
   const oscRef = useRef(null);
@@ -78,6 +230,7 @@ export default function App() {
   const animFrameRef = useRef(null);
   const startTimeRef = useRef(null);
   const lastCriticalAnnounced = useRef(null);
+  const modalRef = useRef(null);
 
   const initAudio = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -138,9 +291,7 @@ export default function App() {
 
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + duration);
-    } catch {
-      // Audio node cleanup safeguard
-    }
+    } catch {}
   }, [soundEnabled]);
 
   const playScrubProbe = useCallback((freq, pan) => {
@@ -173,9 +324,7 @@ export default function App() {
 
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.13);
-    } catch {
-      // Audio node cleanup safeguard
-    }
+    } catch {}
   }, [initAudio, soundEnabled]);
 
   const checkCriticalPoints = useCallback((progress, preset) => {
@@ -245,8 +394,39 @@ export default function App() {
     });
   }, [currentPreset, getFreqFromY, playScrubProbe, checkCriticalPoints]);
 
+  // Modal Submission
+  const handleDatasetSubmit = (e) => {
+    e.preventDefault();
+    setParseError("");
+
+    try {
+      const parsedModel = parseCustomDataset(customDataInput, customDataName.trim() || "Custom Ingestion");
+      const customKey = `custom_${Date.now()}`;
+
+      setPresets((prev) => ({
+        ...prev,
+        [customKey]: parsedModel
+      }));
+
+      handleReset();
+      setActivePresetKey(customKey);
+      setIsModalOpen(false);
+      setStatusMessage(`Successfully imported and loaded "${parsedModel.name}".`);
+    } catch (err) {
+      setParseError(err.message);
+    }
+  };
+
+  // Keyboard navigation & modal trap
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (isModalOpen) {
+        if (e.code === 'Escape') {
+          setIsModalOpen(false);
+        }
+        return;
+      }
+
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
 
       switch (e.code) {
@@ -273,8 +453,9 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handlePlayToggle, handleReset, handleScrubStep]);
+  }, [handlePlayToggle, handleReset, handleScrubStep, isModalOpen]);
 
+  // Continuous animation loop
   useEffect(() => {
     if (!isPlaying) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -330,7 +511,7 @@ export default function App() {
     };
   }, [isPlaying, playbackSpeed, currentPreset, soundEnabled, getFreqFromY, checkCriticalPoints]);
 
-  // Generate SVG curve points
+  // SVG points cache
   const { points, minY, maxY } = useMemo(() => {
     const numSamples = 200;
     const [minX, maxX] = currentPreset.domain;
@@ -353,7 +534,6 @@ export default function App() {
   const currentPan = playhead * 2 - 1;
   const currentFreq = getFreqFromY(currentActualY, currentPreset.range);
 
-  // SVG coordinate transformation helpers
   const svgWidth = 800;
   const svgHeight = 260;
   const paddingX = 40;
@@ -373,7 +553,7 @@ export default function App() {
       <div style={{ maxWidth: '960px', margin: '0 auto' }}>
         
         {/* Header */}
-        <header style={{ marginBottom: '2rem', borderBottom: '1px solid #1e293b', paddingBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <header style={{ marginBottom: '2rem', borderBottom: '1px solid #1e293b', paddingBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
               <Volume2 color="#38bdf8" size={32} />
@@ -383,30 +563,56 @@ export default function App() {
               Spatial Web Audio Sonification for Screen Readers & STEM Accessibility
             </p>
           </div>
-          <button
-            onClick={() => {
-              initAudio();
-              setSoundEnabled(!soundEnabled);
-              if (soundEnabled && gainRef.current && audioCtxRef.current) {
-                gainRef.current.gain.setValueAtTime(0, audioCtxRef.current.currentTime);
-              }
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              backgroundColor: soundEnabled ? '#1e293b' : '#ef4444',
-              border: '1px solid #334155',
-              color: '#f8fafc',
-              padding: '0.5rem 1rem',
-              borderRadius: '0.375rem',
-              cursor: 'pointer'
-            }}
-            aria-label={soundEnabled ? "Mute audio" : "Unmute audio"}
-          >
-            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-            <span>{soundEnabled ? 'Audio On' : 'Muted'}</span>
-          </button>
+
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button
+              onClick={() => {
+                setParseError("");
+                setIsModalOpen(true);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                backgroundColor: '#38bdf8',
+                border: 'none',
+                color: '#0f172a',
+                padding: '0.5rem 1rem',
+                borderRadius: '0.375rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+              aria-haspopup="dialog"
+            >
+              <Upload size={18} />
+              <span>Import Data</span>
+            </button>
+
+            <button
+              onClick={() => {
+                initAudio();
+                setSoundEnabled(!soundEnabled);
+                if (soundEnabled && gainRef.current && audioCtxRef.current) {
+                  gainRef.current.gain.setValueAtTime(0, audioCtxRef.current.currentTime);
+                }
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                backgroundColor: soundEnabled ? '#1e293b' : '#ef4444',
+                border: '1px solid #334155',
+                color: '#f8fafc',
+                padding: '0.5rem 1rem',
+                borderRadius: '0.375rem',
+                cursor: 'pointer'
+              }}
+              aria-label={soundEnabled ? "Mute audio" : "Unmute audio"}
+            >
+              {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              <span>{soundEnabled ? 'Audio On' : 'Muted'}</span>
+            </button>
+          </div>
         </header>
 
         {/* Preset Selector */}
@@ -415,7 +621,7 @@ export default function App() {
             Select Mathematical Model / Dataset
           </label>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-            {Object.entries(PRESETS).map(([key, data]) => (
+            {Object.entries(presets).map(([key, data]) => (
               <button
                 key={key}
                 onClick={() => {
@@ -430,10 +636,16 @@ export default function App() {
                   backgroundColor: activePresetKey === key ? '#1e293b' : '#0f172a',
                   color: '#f8fafc',
                   textAlign: 'left',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  position: 'relative'
                 }}
               >
                 <div style={{ fontWeight: 600 }}>{data.name}</div>
+                {key.startsWith('custom_') && (
+                  <span style={{ fontSize: '0.65rem', backgroundColor: '#0284c7', color: '#fff', padding: '2px 6px', borderRadius: '4px', position: 'absolute', top: '8px', right: '8px' }}>
+                    CUSTOM
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -457,11 +669,9 @@ export default function App() {
           {/* SVG Visualizer Canvas */}
           <div style={{ backgroundColor: '#090d16', borderRadius: '0.5rem', border: '1px solid #334155', padding: '0.5rem', marginBottom: '1.25rem' }}>
             <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
-              {/* Reference Grid lines */}
               <line x1={paddingX} y1={paddingY} x2={paddingX} y2={svgHeight - paddingY} stroke="#1e293b" strokeWidth="1" />
               <line x1={paddingX} y1={svgHeight - paddingY} x2={svgWidth - paddingX} y2={svgHeight - paddingY} stroke="#1e293b" strokeWidth="1" />
 
-              {/* Zero-Axis baseline if within range */}
               {minY < 0 && maxY > 0 && (
                 <line
                   x1={paddingX}
@@ -474,7 +684,6 @@ export default function App() {
                 />
               )}
 
-              {/* Continuous Waveform Path */}
               <path
                 d={points.reduce((acc, pt, idx) => {
                   const px = getXPos(pt.norm);
@@ -488,7 +697,6 @@ export default function App() {
                 strokeLinejoin="round"
               />
 
-              {/* Critical Landmark Points */}
               {currentPreset.criticalPoints.map((pt, i) => {
                 const ptNorm = (pt.x - minX) / (maxX - minX);
                 const px = getXPos(ptNorm);
@@ -506,7 +714,6 @@ export default function App() {
                 );
               })}
 
-              {/* Vertical Playhead Cursor */}
               <line
                 x1={getXPos(playhead)}
                 y1={paddingY}
@@ -517,7 +724,6 @@ export default function App() {
                 strokeDasharray="4 2"
               />
 
-              {/* Active Coordinate Tracking Dot */}
               <circle
                 cx={getXPos(playhead)}
                 cy={getYPos(currentActualY)}
@@ -675,6 +881,166 @@ export default function App() {
         </section>
 
       </div>
+
+      {/* FR-07 Modal Dialog */}
+      {isModalOpen && (
+        <div 
+          role="dialog" 
+          aria-modal="true" 
+          aria-labelledby="modal-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1rem',
+            zIndex: 50
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsModalOpen(false);
+          }}
+        >
+          <div 
+            ref={modalRef}
+            style={{
+              backgroundColor: '#1e293b',
+              border: '1px solid #334155',
+              borderRadius: '0.75rem',
+              width: '100%',
+              maxWidth: '540px',
+              padding: '1.5rem',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <FileText color="#38bdf8" size={20} />
+                <h3 id="modal-title" style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Import Dataset (CSV / JSON)</h3>
+              </div>
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                aria-label="Close dialog"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleDatasetSubmit}>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '0.35rem' }}>
+                  Dataset Name
+                </label>
+                <input
+                  type="text"
+                  value={customDataName}
+                  onChange={(e) => setCustomDataName(e.target.value)}
+                  placeholder="e.g. Inflation Rate 2018-2024"
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem',
+                    backgroundColor: '#0f172a',
+                    border: '1px solid #334155',
+                    borderRadius: '0.375rem',
+                    color: '#f8fafc',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1' }}>
+                    Raw Data (2-Column CSV or JSON Array)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomDataInput(
+`[
+  {"x": 0, "y": 0},
+  {"x": 1, "y": 3},
+  {"x": 2, "y": -1},
+  {"x": 3, "y": 4},
+  {"x": 4, "y": 1}
+]`
+                      );
+                    }}
+                    style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}
+                  >
+                    Paste JSON Example
+                  </button>
+                </div>
+                <textarea
+                  rows={8}
+                  value={customDataInput}
+                  onChange={(e) => setCustomDataInput(e.target.value)}
+                  placeholder="x, y&#10;0, 1.2&#10;1, 2.5&#10;2, 3.8"
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem',
+                    backgroundColor: '#0f172a',
+                    border: '1px solid #334155',
+                    borderRadius: '0.375rem',
+                    color: '#f8fafc',
+                    fontFamily: 'monospace',
+                    fontSize: '0.85rem',
+                    boxSizing: 'border-box',
+                    resize: 'vertical'
+                  }}
+                />
+              </div>
+
+              {parseError && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#450a0a', border: '1px solid #991b1b', borderRadius: '0.375rem', padding: '0.6rem', color: '#fca5a5', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                  <AlertCircle size={16} />
+                  <span>{parseError}</span>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  style={{
+                    padding: '0.6rem 1rem',
+                    backgroundColor: '#334155',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '0.375rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.6rem 1.25rem',
+                    backgroundColor: '#0284c7',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '0.375rem',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <CheckCircle2 size={16} />
+                  Load & Sonify
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
