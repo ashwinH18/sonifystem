@@ -48,15 +48,7 @@ SonifySTEM transforms abstract mathematical curves and biomedical time-series da
 
 ---
 
-## 💻 Getting Started
+## 🌐 Live Application
 
-```bash
-# Clone the repository
-git clone [https://github.com/AshwinH18/sonifystem.git](https://github.com/AshwinH18/sonifystem.git)
-cd sonifystem
-
-# Install dependencies
-npm install
-
-# Run local development server
-npm run dev
+Experience the tool live in your browser:
+**[sonifystem.vercel.app](https://sonifystem.vercel.app)**
