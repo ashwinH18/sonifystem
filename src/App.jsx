@@ -22,7 +22,7 @@ const DEFAULT_PRESETS = {
     fn: (x) => Math.pow(x, 2),
     domain: [-2, 2],
     range: [0, 4],
-    criticalPoints: [{ x: 0, y: 0, label: "Global Minimum (0, 0)" }]
+    criticalPoints: [{ x: 0, y: 0, label: "Global Minimum (0, 0)", type: "extrema" }]
   },
   cubic: {
     name: "Cubic (y = x³ - 3x)",
@@ -31,11 +31,11 @@ const DEFAULT_PRESETS = {
     domain: [-2.2, 2.2],
     range: [-3, 3],
     criticalPoints: [
-      { x: -1.732, y: 0, label: "Root (x = -√3)" },
-      { x: -1, y: 2, label: "Local Maximum (-1, 2)" },
-      { x: 0, y: 0, label: "Inflection Point & Root (0, 0)" },
-      { x: 1, y: -2, label: "Local Minimum (1, -2)" },
-      { x: 1.732, y: 0, label: "Root (x = √3)" }
+      { x: -1.732, y: 0, label: "Root (x = -√3)", type: "root" },
+      { x: -1, y: 2, label: "Local Maximum (-1, 2)", type: "extrema" },
+      { x: 0, y: 0, label: "Root & Inflection Point (0, 0)", type: "root" },
+      { x: 1, y: -2, label: "Local Minimum (1, -2)", type: "extrema" },
+      { x: 1.732, y: 0, label: "Root (x = √3)", type: "root" }
     ]
   },
   sine: {
@@ -45,11 +45,11 @@ const DEFAULT_PRESETS = {
     domain: [0, Math.PI * 2],
     range: [-1, 1],
     criticalPoints: [
-      { x: 0, y: 0, label: "Root (0, 0)" },
-      { x: Math.PI / 2, y: 1, label: "Peak (π/2, 1)" },
-      { x: Math.PI, y: 0, label: "Root (π, 0)" },
-      { x: (3 * Math.PI) / 2, y: -1, label: "Trough (3π/2, -1)" },
-      { x: 2 * Math.PI, y: 0, label: "Root (2π, 0)" }
+      { x: 0, y: 0, label: "Root (0, 0)", type: "root" },
+      { x: Math.PI / 2, y: 1, label: "Peak (π/2, 1)", type: "extrema" },
+      { x: Math.PI, y: 0, label: "Root (π, 0)", type: "root" },
+      { x: (3 * Math.PI) / 2, y: -1, label: "Trough (3π/2, -1)", type: "extrema" },
+      { x: 2 * Math.PI, y: 0, label: "Root (2π, 0)", type: "root" }
     ]
   },
   ecg: {
@@ -66,11 +66,11 @@ const DEFAULT_PRESETS = {
     domain: [0, 1],
     range: [-0.4, 1.3],
     criticalPoints: [
-      { x: 0.2, y: 0.15, label: "P-Wave (Atrial Depolarization)" },
-      { x: 0.35, y: -0.2, label: "Q-Wave" },
-      { x: 0.4, y: 1.2, label: "R-Peak (Ventricular Depolarization)" },
-      { x: 0.45, y: -0.35, label: "S-Wave" },
-      { x: 0.7, y: 0.25, label: "T-Wave (Repolarization)" }
+      { x: 0.2, y: 0.15, label: "P-Wave (Atrial Depolarization)", type: "extrema" },
+      { x: 0.35, y: -0.2, label: "Q-Wave", type: "extrema" },
+      { x: 0.4, y: 1.2, label: "R-Peak (Ventricular Depolarization)", type: "extrema" },
+      { x: 0.45, y: -0.35, label: "S-Wave", type: "extrema" },
+      { x: 0.7, y: 0.25, label: "T-Wave (Repolarization)", type: "extrema" }
     ]
   }
 };
@@ -177,9 +177,9 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
     const next = parsedPairs[i + 1].y;
 
     if (curr > prev && curr > next) {
-      criticalPoints.push({ x: parsedPairs[i].x, y: curr, label: `Local Peak (${parsedPairs[i].x.toFixed(2)}, ${curr.toFixed(2)})` });
+      criticalPoints.push({ x: parsedPairs[i].x, y: curr, label: `Local Peak (${parsedPairs[i].x.toFixed(2)}, ${curr.toFixed(2)})`, type: 'extrema' });
     } else if (curr < prev && curr < next) {
-      criticalPoints.push({ x: parsedPairs[i].x, y: curr, label: `Local Trough (${parsedPairs[i].x.toFixed(2)}, ${curr.toFixed(2)})` });
+      criticalPoints.push({ x: parsedPairs[i].x, y: curr, label: `Local Trough (${parsedPairs[i].x.toFixed(2)}, ${curr.toFixed(2)})`, type: 'extrema' });
     }
   }
 
@@ -188,7 +188,7 @@ function parseCustomDataset(rawText, datasetName = "Custom Dataset") {
     const y2 = parsedPairs[i + 1].y;
     if ((y1 <= 0 && y2 > 0) || (y1 >= 0 && y2 < 0)) {
       const rootX = parsedPairs[i].x + (-y1 / (y2 - y1 || 1)) * (parsedPairs[i + 1].x - parsedPairs[i].x);
-      criticalPoints.push({ x: rootX, y: 0, label: `Root Crossing (y=0)` });
+      criticalPoints.push({ x: rootX, y: 0, label: `Root Crossing (y=0)`, type: 'root' });
     }
   }
 
@@ -211,13 +211,9 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [statusMessage, setStatusMessage] = useState("Select a preset, use Space to play, or Arrow keys to scrub.");
   
-  // FR-06: High-Contrast AAA Mode
   const [isHighContrast, setIsHighContrast] = useState(false);
-
-  // FR-08: Slope Timbre Modulation Toggle
   const [timbreModulationEnabled, setTimbreModulationEnabled] = useState(true);
 
-  // FR-07: Ingestion Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [customDataName, setCustomDataName] = useState("Economic Trend (CPI)");
   const [customDataInput, setCustomDataInput] = useState(
@@ -234,7 +230,6 @@ export default function App() {
 
   const currentPreset = presets[activePresetKey] || presets.cubic;
 
-  // Web Audio Graph References (FR-08: Dual Osc for Sine & Saw cross-fade)
   const audioCtxRef = useRef(null);
   const sineOscRef = useRef(null);
   const sawOscRef = useRef(null);
@@ -247,7 +242,6 @@ export default function App() {
   const startTimeRef = useRef(null);
   const lastCriticalAnnounced = useRef(null);
 
-  // Theme palettes
   const theme = useMemo(() => {
     if (isHighContrast) {
       return {
@@ -265,7 +259,8 @@ export default function App() {
         axisZero: '#ffffff',
         cursorLine: '#ffffff',
         cursorDot: '#00ffff',
-        landmarkDot: '#ff2a2a',
+        landmarkRoot: '#38bdf8',
+        landmarkExtrema: '#ff2a2a',
         buttonSecondaryBg: '#000000',
         buttonSecondaryText: '#ffffff',
         consoleBg: '#000000',
@@ -287,7 +282,8 @@ export default function App() {
       axisZero: '#475569',
       cursorLine: '#ffffff',
       cursorDot: '#facc15',
-      landmarkDot: '#f43f5e',
+      landmarkRoot: '#00e5ff',
+      landmarkExtrema: '#f43f5e',
       buttonSecondaryBg: '#334155',
       buttonSecondaryText: '#ffffff',
       consoleBg: '#090d16',
@@ -295,7 +291,6 @@ export default function App() {
     };
   }, [isHighContrast]);
 
-  // Compute numerical derivative dy/dx using symmetric difference
   const getSlopeAt = useCallback((x, preset) => {
     const [minX, maxX] = preset.domain;
     const h = (maxX - minX) * 0.002;
@@ -359,29 +354,87 @@ export default function App() {
     return 180 + normY * 700;
   }, []);
 
-  const playEarcon = useCallback((freq = 1050, duration = 0.15) => {
+  // FR-03: Resonant glass chime for roots (y = 0)
+  const playRootChime = useCallback(() => {
     if (!audioCtxRef.current || !soundEnabled) return;
     try {
       const ctx = audioCtxRef.current;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      const fundamental = ctx.createOscillator();
+      const overtone = ctx.createOscillator();
+      const gainFund = ctx.createGain();
+      const gainOver = ctx.createGain();
 
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      fundamental.type = 'sine';
+      fundamental.frequency.setValueAtTime(880, ctx.currentTime); // A5 Bell
 
-      gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+      overtone.type = 'sine';
+      overtone.frequency.setValueAtTime(1320, ctx.currentTime); // Perfect fifth shimmer
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+      // Envelope: Fast attack, elongated shimmer decay
+      gainFund.gain.setValueAtTime(0.001, ctx.currentTime);
+      gainFund.gain.exponentialRampToValueAtTime(0.28, ctx.currentTime + 0.015);
+      gainFund.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
 
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + duration);
+      gainOver.gain.setValueAtTime(0.001, ctx.currentTime);
+      gainOver.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.012);
+      gainOver.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.28);
+
+      fundamental.connect(gainFund);
+      overtone.connect(gainOver);
+      gainFund.connect(ctx.destination);
+      gainOver.connect(ctx.destination);
+
+      fundamental.start(ctx.currentTime);
+      overtone.start(ctx.currentTime);
+      fundamental.stop(ctx.currentTime + 0.36);
+      overtone.stop(ctx.currentTime + 0.36);
     } catch {}
   }, [soundEnabled]);
 
-  // Scrub probe with slope-derived harmonic timbre
+  // FR-03: Acoustic percussion woodblock tap for extrema (peaks/valleys)
+  const playWoodblockTap = useCallback(() => {
+    if (!audioCtxRef.current || !soundEnabled) return;
+    try {
+      const ctx = audioCtxRef.current;
+      const oscPrimary = ctx.createOscillator();
+      const oscSecondary = ctx.createOscillator();
+      const blockGain = ctx.createGain();
+
+      oscPrimary.type = 'sine';
+      oscSecondary.type = 'sine';
+
+      // Pitch sweep simulation of hollow wooden resonant chamber
+      oscPrimary.frequency.setValueAtTime(820, ctx.currentTime);
+      oscPrimary.frequency.exponentialRampToValueAtTime(280, ctx.currentTime + 0.045);
+
+      oscSecondary.frequency.setValueAtTime(1150, ctx.currentTime);
+      oscSecondary.frequency.exponentialRampToValueAtTime(380, ctx.currentTime + 0.035);
+
+      // Snappy woodblock envelope: ultra-fast transient attack, sharp wooden drop
+      blockGain.gain.setValueAtTime(0.001, ctx.currentTime);
+      blockGain.gain.linearRampToValueAtTime(0.42, ctx.currentTime + 0.002);
+      blockGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.06);
+
+      oscPrimary.connect(blockGain);
+      oscSecondary.connect(blockGain);
+      blockGain.connect(ctx.destination);
+
+      oscPrimary.start(ctx.currentTime);
+      oscSecondary.start(ctx.currentTime);
+      oscPrimary.stop(ctx.currentTime + 0.065);
+      oscSecondary.stop(ctx.currentTime + 0.065);
+    } catch {}
+  }, [soundEnabled]);
+
+  const dispatchEarcon = useCallback((type) => {
+    if (type === 'root') {
+      playRootChime();
+    } else {
+      playWoodblockTap();
+    }
+  }, [playRootChime, playWoodblockTap]);
+
+  // Tactile scrubbing probe with slope-derived timbre
   const playScrubProbe = useCallback((freq, pan, slope) => {
     if (!soundEnabled) return;
     initAudio();
@@ -401,7 +454,6 @@ export default function App() {
       sineOsc.frequency.setValueAtTime(freq, ctx.currentTime);
       sawOsc.frequency.setValueAtTime(freq, ctx.currentTime);
 
-      // FR-08 Slope weight (sawtooth intensity scales with |dy/dx|)
       const absSlope = Math.abs(slope);
       const sawMix = timbreModulationEnabled ? Math.min(0.7, absSlope * 0.15) : 0;
       const sineMix = 1 - sawMix;
@@ -435,24 +487,24 @@ export default function App() {
 
   const checkCriticalPoints = useCallback((progress, preset) => {
     const [minX, maxX] = preset.domain;
-    let landmarkLabel = null;
+    let hit = null;
 
     preset.criticalPoints.forEach((pt) => {
       const ptProgress = (pt.x - minX) / (maxX - minX);
       if (Math.abs(progress - ptProgress) < 0.015) {
         if (lastCriticalAnnounced.current !== pt.label) {
-          playEarcon(1050, 0.15);
+          dispatchEarcon(pt.type);
           lastCriticalAnnounced.current = pt.label;
         }
-        landmarkLabel = pt.label;
+        hit = pt;
       }
     });
 
-    if (!landmarkLabel) {
+    if (!hit) {
       lastCriticalAnnounced.current = null;
     }
-    return landmarkLabel;
-  }, [playEarcon]);
+    return hit ? hit.label : null;
+  }, [dispatchEarcon]);
 
   const handlePlayToggle = useCallback(() => {
     initAudio();
@@ -494,10 +546,10 @@ export default function App() {
       const pan = nextProgress * 2 - 1;
 
       playScrubProbe(freq, pan, slope);
-      const hit = checkCriticalPoints(nextProgress, currentPreset);
+      const landmarkHit = checkCriticalPoints(nextProgress, currentPreset);
 
       const slopeText = slope > 1.5 ? "Climbing Sharp" : slope < -1.5 ? "Plunging Steep" : Math.abs(slope) < 0.2 ? "Flat" : slope > 0 ? "Rising" : "Falling";
-      setStatusMessage(`X: ${scrubX.toFixed(2)}, Y: ${scrubY.toFixed(2)}, Slope: ${slopeText}${hit ? ` — ${hit}` : ''}`);
+      setStatusMessage(`X: ${scrubX.toFixed(2)}, Y: ${scrubY.toFixed(2)}, Slope: ${slopeText}${landmarkHit ? ` — ${landmarkHit}` : ''}`);
       return nextProgress;
     });
   }, [currentPreset, getFreqFromY, getSlopeAt, playScrubProbe, checkCriticalPoints]);
@@ -571,7 +623,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handlePlayToggle, handleReset, handleScrubStep, toggleHighContrast, isModalOpen]);
 
-  // Continuous animation loop with FR-08 dynamic timbre crossfade
   useEffect(() => {
     if (!isPlaying) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -611,7 +662,6 @@ export default function App() {
           pannerRef.current.pan.setTargetAtTime(panValue, ctx.currentTime, 0.02);
         }
 
-        // FR-08 Crossfade based on slope steepness
         const absSlope = Math.abs(slope);
         const sawMix = timbreModulationEnabled ? Math.min(0.7, absSlope * 0.15) : 0;
         const sineMix = 1 - sawMix;
@@ -620,9 +670,9 @@ export default function App() {
         sawGainRef.current.gain.setTargetAtTime(sawMix, ctx.currentTime, 0.03);
         masterGainRef.current.gain.setTargetAtTime(0.18, ctx.currentTime, 0.02);
 
-        const hit = checkCriticalPoints(progress, currentPreset);
-        if (hit) {
-          setStatusMessage(`Mark: ${hit}`);
+        const landmarkHit = checkCriticalPoints(progress, currentPreset);
+        if (landmarkHit) {
+          setStatusMessage(`Mark: ${landmarkHit}`);
         }
       }
 
@@ -685,16 +735,15 @@ export default function App() {
               <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', margin: 0, color: theme.textPrimary }}>SonifySTEM</h1>
             </div>
             <p style={{ color: theme.textSecondary, margin: 0, fontSize: '0.95rem' }}>
-              Deterministic Spatial Audio & Timbre Visualizer for STEM Accessibility
+              Deterministic Spatial Audio & Earcon Visualizer for STEM Accessibility
             </p>
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            {/* FR-08 Timbre Modulation Toggle */}
             <button
               onClick={() => {
                 setTimbreModulationEnabled(!timbreModulationEnabled);
-                setStatusMessage(`Slope Timbre Modulation: ${!timbreModulationEnabled ? 'Enabled' : 'Disabled'}`);
+                setStatusMessage(`Slope Timbre: ${!timbreModulationEnabled ? 'Enabled' : 'Disabled'}`);
               }}
               style={{
                 display: 'flex',
@@ -715,7 +764,6 @@ export default function App() {
               <span>{timbreModulationEnabled ? 'Slope Timbre: ON' : 'Slope Timbre: OFF'}</span>
             </button>
 
-            {/* FR-06 High Contrast Toggle */}
             <button
               onClick={toggleHighContrast}
               style={{
@@ -873,17 +921,19 @@ export default function App() {
                 strokeLinejoin="round"
               />
 
+              {/* FR-03 Critical Landmark Nodes (Blue/Cyan for Roots, Red/Pink for Extrema) */}
               {currentPreset.criticalPoints.map((pt, i) => {
                 const ptNorm = (pt.x - minX) / (maxX - minX);
                 const px = getXPos(ptNorm);
                 const py = getYPos(pt.y);
+                const isRoot = pt.type === 'root';
                 return (
                   <circle
                     key={i}
                     cx={px}
                     cy={py}
-                    r={isHighContrast ? "7" : "5"}
-                    fill={theme.landmarkDot}
+                    r={isHighContrast ? "7" : "5.5"}
+                    fill={isRoot ? theme.landmarkRoot : theme.landmarkExtrema}
                     stroke="#000000"
                     strokeWidth="2"
                   />
@@ -911,7 +961,7 @@ export default function App() {
             </svg>
           </div>
 
-          {/* Telemetry Grid with Derivative Readout */}
+          {/* Telemetry Grid with Earcon Landmark Guide */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
             <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
               <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>X Coord</div>
@@ -1058,20 +1108,41 @@ export default function App() {
           <strong>Assistive Console:</strong> {statusMessage}
         </section>
 
-        {/* Hotkey Guide */}
-        <section style={{ backgroundColor: theme.cardBg, borderRadius: '0.5rem', padding: '1rem 1.25rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <Keyboard size={18} color={theme.accent} />
-            <span style={{ fontWeight: 800, fontSize: '0.9rem', color: theme.textPrimary }}>Keyboard Navigation Shortcuts</span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', fontSize: '0.8rem', color: theme.textSecondary }}>
-            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>Space</kbd> Play / Pause sweep</div>
-            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd> / <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> Step 1% with slope probe tone</div>
-            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>Shift</kbd> + <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd> / <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> Jump 5%</div>
-            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>H</kbd> Toggle High Contrast (AAA)</div>
-            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>R</kbd> Reset cursor to 0</div>
-          </div>
-        </section>
+        {/* Acoustic Landmarks Legend & Hotkey Guide */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+          {/* FR-03 Earcon Sound Guide */}
+          <section style={{ backgroundColor: theme.cardBg, borderRadius: '0.5rem', padding: '1rem 1.25rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <Volume2 size={18} color={theme.accent} />
+              <span style={{ fontWeight: 800, fontSize: '0.9rem', color: theme.textPrimary }}>Acoustic Earcon Legend</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.8rem', color: theme.textSecondary }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: theme.landmarkRoot }}></span>
+                <span><strong>Root (y = 0):</strong> Shimmering metallic bell chime (880 Hz)</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: theme.landmarkExtrema }}></span>
+                <span><strong>Extrema (Peaks & Valleys):</strong> Percussive woodblock knock</span>
+              </div>
+            </div>
+          </section>
+
+          {/* Hotkey Guide */}
+          <section style={{ backgroundColor: theme.cardBg, borderRadius: '0.5rem', padding: '1rem 1.25rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <Keyboard size={18} color={theme.accent} />
+              <span style={{ fontWeight: 800, fontSize: '0.9rem', color: theme.textPrimary }}>Shortcuts</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.4rem', fontSize: '0.8rem', color: theme.textSecondary }}>
+              <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 5px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>Space</kbd> Play / Pause</div>
+              <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 5px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd>/<kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 5px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> Scrub 1%</div>
+              <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 5px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>Shift</kbd>+<kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 5px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd>/<kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 5px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> 5%</div>
+              <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 5px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>H</kbd> High Contrast</div>
+              <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 5px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>R</kbd> Reset to 0</div>
+            </div>
+          </section>
+        </div>
 
       </div>
 
