@@ -1,16 +1,43 @@
-# React + Vite
+# SonifySTEM 🎵📐
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> **Bridging accessibility in STEM through real-time mathematical sonification and spatial audio.**
 
-Currently, two official plugins are available:
+SonifySTEM transforms abstract mathematical equations and biomedical time-series data into intuitive, spatial soundscapes. Built specifically for blind, visually impaired (BVI), and neurodivergent learners, the tool maps visual curve dimensions directly to pitch, stereo pan, and discrete auditory earcons.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 🚀 Key Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+* **Binaural Spatial Panning:** Maps horizontal axis progression ($x$-axis) continuously across the stereo field from left ear to right ear using the Web Audio API `StereoPannerNode`.
+* **Frequency Mapping Engine:** Maps vertical coordinates ($y$-axis) to musical frequency (180 Hz – 880 Hz) using clean sinusoidal synthesis with smooth exponential transitions.
+* **Auditory Cues (Earcons):** Generates targeted auditory markers at critical points (local extrema, inflection points, and cardiac waveform events like R-peaks).
+* **Screen Reader Ready:** Built-in `aria-live` status console communicates numerical coordinates and topological landmarks in real time.
+* **Interactive Curvature Suite:** Preloaded mathematical models including:
+  * **Quadratic:** $y = x^2$ (Parabolic vertex demonstration)
+  * **Cubic:** $y = x^3 - 3x$ (Multiple extrema and inflection points)
+  * **Harmonic:** $y = \sin(x)$ (Periodic oscillation)
+  * **Biomedical ECG:** P-Q-R-S-T cardiac cycle simulation
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 🛠️ Tech Stack
+
+* **Framework:** React 19 + Vite
+* **Audio Engine:** Web Audio API (`AudioContext`, `OscillatorNode`, `GainNode`, `StereoPannerNode`)
+* **Icons:** `lucide-react`
+* **Styling:** Modular CSS & Accessible UI Tokens
+
+---
+
+## 💻 Getting Started
+
+### Prerequisites
+* [Node.js](https://nodejs.org/) (v18 or higher recommended)
+* Headphones or stereo speakers (required for spatial audio)
+
+### Installation & Run
+
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/AshwinH18/sonifystem.git](https://github.com/AshwinH18/sonifystem.git)
+   cd sonifystem
