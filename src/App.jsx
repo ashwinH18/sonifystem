@@ -11,7 +11,8 @@ import {
   FileText, 
   CheckCircle2, 
   AlertCircle,
-  SunMoon
+  SunMoon,
+  Gauge
 } from 'lucide-react';
 
 const DEFAULT_PRESETS = {
@@ -213,6 +214,9 @@ export default function App() {
   // FR-06: High-Contrast AAA Mode
   const [isHighContrast, setIsHighContrast] = useState(false);
 
+  // FR-08: Slope Timbre Modulation Toggle
+  const [timbreModulationEnabled, setTimbreModulationEnabled] = useState(true);
+
   // FR-07: Ingestion Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [customDataName, setCustomDataName] = useState("Economic Trend (CPI)");
@@ -230,15 +234,20 @@ export default function App() {
 
   const currentPreset = presets[activePresetKey] || presets.cubic;
 
+  // Web Audio Graph References (FR-08: Dual Osc for Sine & Saw cross-fade)
   const audioCtxRef = useRef(null);
-  const oscRef = useRef(null);
+  const sineOscRef = useRef(null);
+  const sawOscRef = useRef(null);
+  const sineGainRef = useRef(null);
+  const sawGainRef = useRef(null);
+  const masterGainRef = useRef(null);
   const pannerRef = useRef(null);
-  const gainRef = useRef(null);
+  
   const animFrameRef = useRef(null);
   const startTimeRef = useRef(null);
   const lastCriticalAnnounced = useRef(null);
 
-  // Theme palettes: Default Slate vs. WCAG AAA Yellow & Black
+  // Theme palettes
   const theme = useMemo(() => {
     if (isHighContrast) {
       return {
@@ -246,7 +255,6 @@ export default function App() {
         cardBg: '#000000',
         surfaceBg: '#050505',
         border: '#ffd600',
-        borderFocus: '#ffffff',
         borderWidth: '2px',
         textPrimary: '#ffd600',
         textSecondary: '#ffffff',
@@ -269,7 +277,6 @@ export default function App() {
       cardBg: '#1e293b',
       surfaceBg: '#0f172a',
       border: '#334155',
-      borderFocus: '#38bdf8',
       borderWidth: '1px',
       textPrimary: '#f8fafc',
       textSecondary: '#94a3b8',
@@ -288,33 +295,57 @@ export default function App() {
     };
   }, [isHighContrast]);
 
+  // Compute numerical derivative dy/dx using symmetric difference
+  const getSlopeAt = useCallback((x, preset) => {
+    const [minX, maxX] = preset.domain;
+    const h = (maxX - minX) * 0.002;
+    const yForward = preset.fn(x + h);
+    const yBackward = preset.fn(x - h);
+    return (yForward - yBackward) / (2 * h);
+  }, []);
+
   const initAudio = useCallback(() => {
     if (!audioCtxRef.current) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioContext();
 
-      const osc = ctx.createOscillator();
+      const sineOsc = ctx.createOscillator();
+      const sawOsc = ctx.createOscillator();
+      const sineGain = ctx.createGain();
+      const sawGain = ctx.createGain();
+      const masterGain = ctx.createGain();
       const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-      const gain = ctx.createGain();
 
-      osc.type = 'sine';
-      gain.gain.setValueAtTime(0, ctx.currentTime);
+      sineOsc.type = 'sine';
+      sawOsc.type = 'sawtooth';
+
+      sineGain.gain.setValueAtTime(1.0, ctx.currentTime);
+      sawGain.gain.setValueAtTime(0.0, ctx.currentTime);
+      masterGain.gain.setValueAtTime(0.0, ctx.currentTime);
+
+      sineOsc.connect(sineGain);
+      sawOsc.connect(sawGain);
+
+      sineGain.connect(masterGain);
+      sawGain.connect(masterGain);
 
       if (panner) {
-        osc.connect(gain);
-        gain.connect(panner);
+        masterGain.connect(panner);
         panner.connect(ctx.destination);
       } else {
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+        masterGain.connect(ctx.destination);
       }
 
-      osc.start();
+      sineOsc.start();
+      sawOsc.start();
 
       audioCtxRef.current = ctx;
-      oscRef.current = osc;
+      sineOscRef.current = sineOsc;
+      sawOscRef.current = sawOsc;
+      sineGainRef.current = sineGain;
+      sawGainRef.current = sawGain;
+      masterGainRef.current = masterGain;
       pannerRef.current = panner;
-      gainRef.current = gain;
     }
 
     if (audioCtxRef.current.state === 'suspended') {
@@ -350,38 +381,57 @@ export default function App() {
     } catch {}
   }, [soundEnabled]);
 
-  const playScrubProbe = useCallback((freq, pan) => {
+  // Scrub probe with slope-derived harmonic timbre
+  const playScrubProbe = useCallback((freq, pan, slope) => {
     if (!soundEnabled) return;
     initAudio();
     const ctx = audioCtxRef.current;
     if (!ctx) return;
 
     try {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      const sineOsc = ctx.createOscillator();
+      const sawOsc = ctx.createOscillator();
+      const sineGain = ctx.createGain();
+      const sawGain = ctx.createGain();
+      const probeMaster = ctx.createGain();
       const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
 
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      sineOsc.type = 'sine';
+      sawOsc.type = 'sawtooth';
+      sineOsc.frequency.setValueAtTime(freq, ctx.currentTime);
+      sawOsc.frequency.setValueAtTime(freq, ctx.currentTime);
 
-      gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+      // FR-08 Slope weight (sawtooth intensity scales with |dy/dx|)
+      const absSlope = Math.abs(slope);
+      const sawMix = timbreModulationEnabled ? Math.min(0.7, absSlope * 0.15) : 0;
+      const sineMix = 1 - sawMix;
+
+      sineGain.gain.setValueAtTime(sineMix, ctx.currentTime);
+      sawGain.gain.setValueAtTime(sawMix, ctx.currentTime);
+
+      probeMaster.gain.setValueAtTime(0.001, ctx.currentTime);
+      probeMaster.gain.linearRampToValueAtTime(0.28, ctx.currentTime + 0.015);
+      probeMaster.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.14);
+
+      sineOsc.connect(sineGain);
+      sawOsc.connect(sawGain);
+      sineGain.connect(probeMaster);
+      sawGain.connect(probeMaster);
 
       if (panner) {
         panner.pan.setValueAtTime(pan, ctx.currentTime);
-        osc.connect(gain);
-        gain.connect(panner);
+        probeMaster.connect(panner);
         panner.connect(ctx.destination);
       } else {
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+        probeMaster.connect(ctx.destination);
       }
 
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.13);
+      sineOsc.start(ctx.currentTime);
+      sawOsc.start(ctx.currentTime);
+      sineOsc.stop(ctx.currentTime + 0.15);
+      sawOsc.stop(ctx.currentTime + 0.15);
     } catch {}
-  }, [initAudio, soundEnabled]);
+  }, [initAudio, soundEnabled, timbreModulationEnabled]);
 
   const checkCriticalPoints = useCallback((progress, preset) => {
     const [minX, maxX] = preset.domain;
@@ -408,8 +458,8 @@ export default function App() {
     initAudio();
     if (isPlaying) {
       setIsPlaying(false);
-      if (gainRef.current && audioCtxRef.current) {
-        gainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.05);
+      if (masterGainRef.current && audioCtxRef.current) {
+        masterGainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.05);
       }
     } else {
       setIsPlaying(true);
@@ -421,16 +471,16 @@ export default function App() {
     setIsPlaying(false);
     setPlayhead(0);
     lastCriticalAnnounced.current = null;
-    if (gainRef.current && audioCtxRef.current) {
-      gainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.05);
+    if (masterGainRef.current && audioCtxRef.current) {
+      masterGainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.05);
     }
     setStatusMessage(`Reset to start of ${currentPreset.name}.`);
   }, [currentPreset.name]);
 
   const handleScrubStep = useCallback((delta) => {
     setIsPlaying(false);
-    if (gainRef.current && audioCtxRef.current) {
-      gainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.02);
+    if (masterGainRef.current && audioCtxRef.current) {
+      masterGainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.02);
     }
 
     setPlayhead((prev) => {
@@ -438,22 +488,24 @@ export default function App() {
       const [minX, maxX] = currentPreset.domain;
       const scrubX = minX + nextProgress * (maxX - minX);
       const scrubY = currentPreset.fn(scrubX);
+      const slope = getSlopeAt(scrubX, currentPreset);
 
       const freq = getFreqFromY(scrubY, currentPreset.range);
       const pan = nextProgress * 2 - 1;
 
-      playScrubProbe(freq, pan);
+      playScrubProbe(freq, pan, slope);
       const hit = checkCriticalPoints(nextProgress, currentPreset);
 
-      setStatusMessage(`X: ${scrubX.toFixed(2)}, Y: ${scrubY.toFixed(2)}${hit ? ` — ${hit}` : ''}`);
+      const slopeText = slope > 1.5 ? "Climbing Sharp" : slope < -1.5 ? "Plunging Steep" : Math.abs(slope) < 0.2 ? "Flat" : slope > 0 ? "Rising" : "Falling";
+      setStatusMessage(`X: ${scrubX.toFixed(2)}, Y: ${scrubY.toFixed(2)}, Slope: ${slopeText}${hit ? ` — ${hit}` : ''}`);
       return nextProgress;
     });
-  }, [currentPreset, getFreqFromY, playScrubProbe, checkCriticalPoints]);
+  }, [currentPreset, getFreqFromY, getSlopeAt, playScrubProbe, checkCriticalPoints]);
 
   const toggleHighContrast = useCallback(() => {
     setIsHighContrast((prev) => {
       const next = !prev;
-      setStatusMessage(`Contrast mode changed: ${next ? "WCAG AAA Yellow and Black" : "Standard Slate Dark"}.`);
+      setStatusMessage(`Contrast mode: ${next ? "WCAG AAA Yellow and Black" : "Standard Slate Dark"}.`);
       return next;
     });
   }, []);
@@ -519,6 +571,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handlePlayToggle, handleReset, handleScrubStep, toggleHighContrast, isModalOpen]);
 
+  // Continuous animation loop with FR-08 dynamic timbre crossfade
   useEffect(() => {
     if (!isPlaying) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -532,8 +585,8 @@ export default function App() {
       if (progress >= 1) {
         setIsPlaying(false);
         setPlayhead(1);
-        if (gainRef.current && audioCtxRef.current) {
-          gainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.05);
+        if (masterGainRef.current && audioCtxRef.current) {
+          masterGainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.05);
         }
         setStatusMessage(`Sweep complete for ${currentPreset.name}.`);
         return;
@@ -544,19 +597,28 @@ export default function App() {
       const [minX, maxX] = currentPreset.domain;
       const currentX = minX + progress * (maxX - minX);
       const currentY = currentPreset.fn(currentX);
+      const slope = getSlopeAt(currentX, currentPreset);
 
-      if (audioCtxRef.current && soundEnabled && oscRef.current && gainRef.current) {
+      if (audioCtxRef.current && soundEnabled && sineOscRef.current && sawOscRef.current && masterGainRef.current) {
         const ctx = audioCtxRef.current;
         const targetFreq = getFreqFromY(currentY, currentPreset.range);
         const panValue = progress * 2 - 1;
 
-        oscRef.current.frequency.setTargetAtTime(targetFreq, ctx.currentTime, 0.02);
+        sineOscRef.current.frequency.setTargetAtTime(targetFreq, ctx.currentTime, 0.02);
+        sawOscRef.current.frequency.setTargetAtTime(targetFreq, ctx.currentTime, 0.02);
 
         if (pannerRef.current) {
           pannerRef.current.pan.setTargetAtTime(panValue, ctx.currentTime, 0.02);
         }
 
-        gainRef.current.gain.setTargetAtTime(0.18, ctx.currentTime, 0.02);
+        // FR-08 Crossfade based on slope steepness
+        const absSlope = Math.abs(slope);
+        const sawMix = timbreModulationEnabled ? Math.min(0.7, absSlope * 0.15) : 0;
+        const sineMix = 1 - sawMix;
+
+        sineGainRef.current.gain.setTargetAtTime(sineMix, ctx.currentTime, 0.03);
+        sawGainRef.current.gain.setTargetAtTime(sawMix, ctx.currentTime, 0.03);
+        masterGainRef.current.gain.setTargetAtTime(0.18, ctx.currentTime, 0.02);
 
         const hit = checkCriticalPoints(progress, currentPreset);
         if (hit) {
@@ -572,7 +634,7 @@ export default function App() {
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [isPlaying, playbackSpeed, currentPreset, soundEnabled, getFreqFromY, checkCriticalPoints]);
+  }, [isPlaying, playbackSpeed, currentPreset, soundEnabled, getFreqFromY, getSlopeAt, timbreModulationEnabled, checkCriticalPoints]);
 
   const { points, minY, maxY } = useMemo(() => {
     const numSamples = 200;
@@ -593,6 +655,7 @@ export default function App() {
   const [minX, maxX] = currentPreset.domain;
   const currentActualX = minX + playhead * (maxX - minX);
   const currentActualY = currentPreset.fn(currentActualX);
+  const currentSlope = getSlopeAt(currentActualX, currentPreset);
   const currentPan = playhead * 2 - 1;
   const currentFreq = getFreqFromY(currentActualY, currentPreset.range);
 
@@ -622,12 +685,37 @@ export default function App() {
               <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', margin: 0, color: theme.textPrimary }}>SonifySTEM</h1>
             </div>
             <p style={{ color: theme.textSecondary, margin: 0, fontSize: '0.95rem' }}>
-              Deterministic Spatial Audio Visualizer for STEM Accessibility
+              Deterministic Spatial Audio & Timbre Visualizer for STEM Accessibility
             </p>
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            {/* FR-06: High Contrast Toggle */}
+            {/* FR-08 Timbre Modulation Toggle */}
+            <button
+              onClick={() => {
+                setTimbreModulationEnabled(!timbreModulationEnabled);
+                setStatusMessage(`Slope Timbre Modulation: ${!timbreModulationEnabled ? 'Enabled' : 'Disabled'}`);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                backgroundColor: timbreModulationEnabled ? (isHighContrast ? '#111100' : '#1e293b') : theme.surfaceBg,
+                border: `${theme.borderWidth} solid ${timbreModulationEnabled ? theme.accent : theme.border}`,
+                color: timbreModulationEnabled ? theme.accent : theme.textSecondary,
+                padding: '0.5rem 0.85rem',
+                borderRadius: '0.375rem',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+              aria-pressed={timbreModulationEnabled}
+              aria-label="Toggle slope timbre modulation based on derivative"
+            >
+              <Gauge size={16} />
+              <span>{timbreModulationEnabled ? 'Slope Timbre: ON' : 'Slope Timbre: OFF'}</span>
+            </button>
+
+            {/* FR-06 High Contrast Toggle */}
             <button
               onClick={toggleHighContrast}
               style={{
@@ -646,7 +734,7 @@ export default function App() {
               aria-label="Toggle WCAG AAA Yellow and Black High-Contrast Mode"
             >
               <SunMoon size={18} />
-              <span>{isHighContrast ? 'AAA Contrast ON' : 'High Contrast'}</span>
+              <span>{isHighContrast ? 'AAA ON' : 'High Contrast'}</span>
             </button>
 
             <button
@@ -676,8 +764,8 @@ export default function App() {
               onClick={() => {
                 initAudio();
                 setSoundEnabled(!soundEnabled);
-                if (soundEnabled && gainRef.current && audioCtxRef.current) {
-                  gainRef.current.gain.setValueAtTime(0, audioCtxRef.current.currentTime);
+                if (soundEnabled && masterGainRef.current && audioCtxRef.current) {
+                  masterGainRef.current.gain.setValueAtTime(0, audioCtxRef.current.currentTime);
                 }
               }}
               style={{
@@ -823,24 +911,30 @@ export default function App() {
             </svg>
           </div>
 
-          {/* Real-time Telemetry Data Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
+          {/* Telemetry Grid with Derivative Readout */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
             <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
-              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>X Coordinate</div>
+              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>X Coord</div>
               <div style={{ fontSize: '1.15rem', fontWeight: 800, color: theme.textPrimary, marginTop: '0.2rem' }}>{currentActualX.toFixed(2)}</div>
             </div>
             <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
-              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Y Amplitude</div>
+              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Y Value</div>
               <div style={{ fontSize: '1.15rem', fontWeight: 800, color: theme.textPrimary, marginTop: '0.2rem' }}>{currentActualY.toFixed(2)}</div>
             </div>
             <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
-              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Pitch Frequency</div>
+              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Slope (dy/dx)</div>
+              <div style={{ fontSize: '1.15rem', fontWeight: 800, color: Math.abs(currentSlope) > 1.5 ? '#f43f5e' : theme.accent, marginTop: '0.2rem' }}>
+                {currentSlope.toFixed(2)}
+              </div>
+            </div>
+            <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
+              <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Pitch (Hz)</div>
               <div style={{ fontSize: '1.15rem', fontWeight: 800, color: theme.textPrimary, marginTop: '0.2rem' }}>{Math.round(currentFreq)} Hz</div>
             </div>
             <div style={{ backgroundColor: theme.surfaceBg, padding: '0.75rem', borderRadius: '0.375rem', border: `${theme.borderWidth} solid ${theme.border}` }}>
               <div style={{ fontSize: '0.75rem', color: theme.textSecondary, textTransform: 'uppercase', fontWeight: 700 }}>Spatial Pan</div>
               <div style={{ fontSize: '1.15rem', fontWeight: 800, color: theme.textPrimary, marginTop: '0.2rem' }}>
-                {currentPan <= -0.1 ? `${Math.round(Math.abs(currentPan) * 100)}% Left` : currentPan >= 0.1 ? `${Math.round(currentPan * 100)}% Right` : 'Center'}
+                {currentPan <= -0.1 ? `${Math.round(Math.abs(currentPan) * 100)}% L` : currentPan >= 0.1 ? `${Math.round(currentPan * 100)}% R` : 'Center'}
               </div>
             </div>
           </div>
@@ -858,16 +952,17 @@ export default function App() {
               aria-valuemin="0"
               aria-valuemax="100"
               aria-valuenow={Math.round(playhead * 100)}
-              aria-valuetext={`X: ${currentActualX.toFixed(2)}, Y: ${currentActualY.toFixed(2)}`}
+              aria-valuetext={`X: ${currentActualX.toFixed(2)}, Y: ${currentActualY.toFixed(2)}, Slope: ${currentSlope.toFixed(2)}`}
               onChange={(e) => {
                 const val = parseFloat(e.target.value);
                 setIsPlaying(false);
                 setPlayhead(val);
                 const scrubX = minX + val * (maxX - minX);
                 const scrubY = currentPreset.fn(scrubX);
-                playScrubProbe(getFreqFromY(scrubY, currentPreset.range), val * 2 - 1);
+                const slope = getSlopeAt(scrubX, currentPreset);
+                playScrubProbe(getFreqFromY(scrubY, currentPreset.range), val * 2 - 1, slope);
                 checkCriticalPoints(val, currentPreset);
-                setStatusMessage(`X: ${scrubX.toFixed(2)}, Y: ${scrubY.toFixed(2)}`);
+                setStatusMessage(`X: ${scrubX.toFixed(2)}, Y: ${scrubY.toFixed(2)}, Slope: ${slope.toFixed(2)}`);
               }}
               style={{
                 width: '100%',
@@ -971,7 +1066,7 @@ export default function App() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', fontSize: '0.8rem', color: theme.textSecondary }}>
             <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>Space</kbd> Play / Pause sweep</div>
-            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd> / <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> Step 1% with audio probe</div>
+            <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd> / <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> Step 1% with slope probe tone</div>
             <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>Shift</kbd> + <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>←</kbd> / <kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>→</kbd> Jump 5%</div>
             <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>H</kbd> Toggle High Contrast (AAA)</div>
             <div><kbd style={{ backgroundColor: theme.surfaceBg, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, color: theme.textPrimary, fontWeight: 700 }}>R</kbd> Reset cursor to 0</div>
@@ -980,7 +1075,7 @@ export default function App() {
 
       </div>
 
-      {/* FR-07 Modal Dialog with High-Contrast Tokens */}
+      {/* FR-07 Modal Dialog */}
       {isModalOpen && (
         <div 
           role="dialog" 
